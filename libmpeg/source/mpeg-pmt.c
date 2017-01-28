@@ -1,10 +1,9 @@
-// ITU-T H.222.0(06/2012)
+// ITU-T H.222.0(10/2014)
 // Information technology ¨C Generic coding of moving pictures and associated audio information: Systems
-// 2.4.4.8 Program map table(p64)
+// 2.4.4.8 Program map table(p68)
 
 #include "mpeg-ts-proto.h"
 #include "mpeg-util.h"
-#include "crc32.h"
 #include <memory.h>
 #include <assert.h>
 
@@ -74,12 +73,12 @@ size_t pmt_read(const uint8_t* data, size_t bytes, pmt_t *pmt)
 
 size_t pmt_write(const pmt_t *pmt, uint8_t *data)
 {
-	// 2.4.4.8 Program map table
+	// 2.4.4.8 Program map table (p68)
 	// Table 2-33
 
 	uint32_t i = 0;
-	uint32_t len = 0;
 	uint32_t crc = 0;
+	ptrdiff_t len = 0;
 	uint8_t *p = NULL;
 
 	data[0] = PAT_TID_PMS;	// program map table
@@ -99,13 +98,14 @@ size_t pmt_write(const pmt_t *pmt, uint8_t *data)
 	data[7] = 0x00;
 
 	// reserved '111'
-	// PCR_PID 15-bits 0x1FFF
+	// PCR_PID 13-bits 0x1FFF
 	nbo_w16(data + 8, (uint16_t)(0xE000 | pmt->PCR_PID));
 
 	// reserved '1111'
-	// program_info_lengt 12-bits
+	// program_info_lengt 12-bits, the first two bits of which shall be '00'.
+	assert(pmt->pminfo_len < 0x400);
 	nbo_w16(data + 10, (uint16_t)(0xF000 | pmt->pminfo_len));
-	if(pmt->pminfo_len > 0)
+	if(pmt->pminfo_len > 0 && pmt->pminfo_len < 0x400)
 	{
 		// fill program info
 		assert(pmt->pminfo);
@@ -114,7 +114,7 @@ size_t pmt_write(const pmt_t *pmt, uint8_t *data)
 
 	// streams
 	p = data + 12 + pmt->pminfo_len;
-	for(i = 0; i < pmt->stream_count; i++)
+	for(i = 0; i < pmt->stream_count && p - data < 1021 - 4 - 5 - pmt->streams[i].esinfo_len; i++)
 	{
 		// stream_type
 		*p = (uint8_t)pmt->streams[i].avtype;
@@ -147,7 +147,7 @@ size_t pmt_write(const pmt_t *pmt, uint8_t *data)
 	nbo_w16(data + 1, (uint16_t)(0xb000 | len)); 
 
 	// crc32
-	crc = crc32(0xffffffff, data, p-data);
+	crc = crc32(0xffffffff, data, (uint32_t)(p-data));
 	//put32(p, crc);
 	p[3] = (crc >> 24) & 0xFF;
 	p[2] = (crc >> 16) & 0xFF;

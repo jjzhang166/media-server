@@ -11,10 +11,10 @@
 // e.g. RTP-Info: url=rtsp://foo.com/bar.avi/streamid=0;seq=45102,url=rtsp://foo.com/bar.avi/streamid=1;seq=30211
 
 #include "rtsp-header-rtp-info.h"
+#include <assert.h>
 #include "ctypedef.h"
 #include "cstringext.h"
 #include "string-util.h"
-#include <assert.h>
 
 #define RTP_INFO_SPECIAL ",;\r\n"
 
@@ -26,7 +26,7 @@ int rtsp_header_rtp_info(const char* field, struct rtsp_header_rtp_info_t* rtpin
 	while(p && *p)
 	{
 		p1 = string_token(p, RTP_INFO_SPECIAL);
-		if(0 == strnicmp("url=", p, 4))
+		if(0 == strncasecmp("url=", p, 4))
 		{
             size_t n = (size_t)(p1 - p - 4); // ptrdiff_t -> size_t
 			if(n >= sizeof(rtpinfo->url))
@@ -34,10 +34,10 @@ int rtsp_header_rtp_info(const char* field, struct rtsp_header_rtp_info_t* rtpin
 			memcpy(rtpinfo->url, p+4, n);
 			rtpinfo->url[n] = '\0';
 		}
-		else if(1 == sscanf(p, "seq = %" PRId64, &rtpinfo->seq))
+		else if(1 == sscanf(p, "seq = %" PRIu64, &rtpinfo->seq))
 		{
 		}
-		else if(1 == sscanf(p, "rtptime = %" PRId64, &rtpinfo->rtptime))
+		else if(1 == sscanf(p, "rtptime = %" PRIu64, &rtpinfo->rtptime))
 		{
 		}
 		else

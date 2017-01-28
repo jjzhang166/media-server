@@ -1,28 +1,19 @@
 #ifndef _mpeg_ps_h_
 #define _mpeg_ps_h_
 
+#include <stdint.h>
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdlib.h>
-#ifndef OS_INT64_TYPE
-#if defined(_WIN32) || defined(_WIN64)
-	typedef __int64				int64_t;	
-	typedef unsigned __int64	uint64_t;
-#else
-	#include <stdint.h>
-	typedef long long			int64_t;
-	typedef unsigned long long	uint64_t;
-#endif
-#define OS_INT64_TYPE
-#endif /* OS_INT64_TYPE */
 
 enum
 {
 	STREAM_VIDEO_MPEG4	= 0x10,
 	STREAM_VIDEO_H264	= 0x1b,
 	STREAM_VIDEO_SVAC	= 0x80,
+	STREAM_AUDIO_MP3	= 0x04,
 	STREAM_AUDIO_AAC	= 0x0f,
 	STREAM_AUDIO_G711	= 0x90,
 	STREAM_AUDIO_G722	= 0x92,

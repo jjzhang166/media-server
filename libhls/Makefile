@@ -12,10 +12,9 @@ OUTFILE = libhls.a
 #--------------------------------------------------------------------
 INCLUDES = . \
 					./include \
-					../libhttp/include \
 					../libmpeg/include \
-					$(ROOT)/include \
-					$(ROOT)/video
+					$(ROOT)/libhttp/include \
+					$(ROOT)/include
 
 #-------------------------------Source-------------------------------
 #
@@ -28,7 +27,7 @@ SOURCE_FILES += $(foreach dir,$(SOURCE_PATHS),$(wildcard $(dir)/*.c))
 #
 # LIBPATHS = $(addprefix -L,$(LIBPATHS)) # add -L prefix
 #--------------------------------------------------------------------
-LIBPATHS = ../libhttp/$(BUILD).$(PLATFORM) ../libmpeg/$(BUILD).$(PLATFORM)
+LIBPATHS =
 ifdef RELEASE
 # relase library path
 LIBPATHS += 
@@ -36,7 +35,7 @@ else
 LIBPATHS +=
 endif
 
-LIBS = http mpeg
+LIBS =
 
 STATIC_LIBS =
 
@@ -44,7 +43,7 @@ STATIC_LIBS =
 #
 # DEFINES := $(addprefix -D,$(DEFINES)) # add -L prefix
 #--------------------------------------------------------------------
-DEFINES = LIBHLS_EXPORTS OS_MAC
+DEFINES =
 
 include $(ROOT)/gcc.mk
 

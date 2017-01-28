@@ -44,8 +44,8 @@ Date: 23 Jan 1997 15:35:06 GMT
 static void rtsp_client_media_play_onreply_ok(struct rtsp_client_context_t* ctx, void* parser)
 {
 	int i;
-	int64_t npt0 = -1L;
-	int64_t npt1 = -1L;
+	uint64_t npt0 = (uint64_t)(-1);
+	uint64_t npt1 = (uint64_t)(-1);
 	double scale = 0.0f;
 	const char *prange, *pscale, *prtpinfo;
 	struct rtsp_header_range_t range;
@@ -83,8 +83,8 @@ static void rtsp_client_media_play_onreply_ok(struct rtsp_client_context_t* ctx,
 	}
 
 	ctx->client.onplay(ctx->param, 0, 
-		-1L==npt0 ? NULL : &npt0, 
-		-1L==npt1 ? NULL : &npt1, 
+		(uint64_t)(-1)==npt0 ? NULL : &npt0, 
+		(uint64_t)(-1)==npt1 ? NULL : &npt1, 
 		pscale ? &scale : NULL,
 		rtpInfo, i);
 }
@@ -128,6 +128,7 @@ static void rtsp_client_media_play_onreply(void* rtsp, int r, void* parser)
 
 int rtsp_client_media_play(struct rtsp_client_context_t *ctx)
 {
+	int len;
 	struct rtsp_media_t* media;
 
 	assert(0 == ctx->aggregate);
@@ -136,7 +137,7 @@ int rtsp_client_media_play(struct rtsp_client_context_t *ctx)
 
 	media = rtsp_get_media(ctx, ctx->progress);
 	assert(media && media->uri && media->session);
-	snprintf(ctx->req, sizeof(ctx->req), 
+	len = snprintf(ctx->req, sizeof(ctx->req),
 		"PLAY %s RTSP/1.0\r\n"
 		"CSeq: %u\r\n"
 		"Session: %s\r\n"
@@ -146,7 +147,7 @@ int rtsp_client_media_play(struct rtsp_client_context_t *ctx)
 		"\r\n", 
 		media->uri, media->cseq++, media->session, ctx->range, ctx->speed, USER_AGENT);
 
-	return ctx->client.request(ctx->transport, media->uri, ctx->req, strlen(ctx->req), ctx, rtsp_client_media_play_onreply);
+	return ctx->client.request(ctx->transport, media->uri, ctx->req, len, ctx, rtsp_client_media_play_onreply);
 }
 
 // aggregate control reply
@@ -183,7 +184,7 @@ static void rtsp_client_aggregate_play_onreply(void* rtsp, int r, void* parser)
 	}
 }
 
-int rtsp_client_play(void* rtsp, const int64_t *npt, const float *speed)
+int rtsp_client_play(void* rtsp, const uint64_t *npt, const float *speed)
 {
 	struct rtsp_client_context_t *ctx;
 	ctx = (struct rtsp_client_context_t*)rtsp;
@@ -195,7 +196,7 @@ int rtsp_client_play(void* rtsp, const int64_t *npt, const float *speed)
 	ctx->progress = 0;
 
 	if(npt)
-		snprintf(ctx->range, sizeof(ctx->range), "Range: npt=%" PRId64 ".%" PRId64 "-\r\n", *npt/1000, *npt%1000);
+		snprintf(ctx->range, sizeof(ctx->range), "Range: npt=%" PRIu64 ".%" PRIu64 "-\r\n", *npt/1000, *npt%1000);
 	else
 		ctx->range[0] = '\0';
 

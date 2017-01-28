@@ -5,8 +5,6 @@
 #include <memory.h>
 #include <assert.h>
 
-#define inline static
-
 #if defined(OS_WINDOWS)
 #define strdup		_strdup
 #define strcasecmp	_stricmp
@@ -158,7 +156,7 @@ struct sdp_media
 struct sdp_context
 {
 	char *raw; // raw source string
-	int offset; // parse offset
+	size_t offset; // parse offset
 
 	int v;
 
@@ -208,26 +206,21 @@ struct sdp_context
 	} m;
 };
 
-inline void sdp_skip_space(struct sdp_context* sdp)
+static inline void sdp_skip_space(struct sdp_context* sdp)
 {
 	char c = sdp->raw[sdp->offset];
 	while(' ' == c || '\t' == c) 
 		c = sdp->raw[++sdp->offset];
 }
 
-inline int sdp_token_word(struct sdp_context* sdp, const char* escape)
+static inline size_t sdp_token_word(struct sdp_context* sdp, const char* escape)
 {
-	int n = sdp->offset;
-	char c = sdp->raw[sdp->offset];
-	while(c && !strchr(escape, c))
-	{
-		c = sdp->raw[++sdp->offset];
-	}
-
+	size_t n = sdp->offset;
+	sdp->offset += strcspn(sdp->raw + sdp->offset, escape);
 	return sdp->offset - n;
 }
 
-inline int sdp_token_crlf(struct sdp_context* sdp)
+static inline int sdp_token_crlf(struct sdp_context* sdp)
 {
 	if('\r' == sdp->raw[sdp->offset])
 		++sdp->offset;
@@ -245,7 +238,7 @@ inline int sdp_token_crlf(struct sdp_context* sdp)
 	return -1;
 }
 
-inline void trim_right(const char* s, int *len)
+static inline void trim_right(const char* s, size_t *len)
 {
 	//// left trim
 	//while(*len > 0 && isspace(s[*pos]))
@@ -261,7 +254,7 @@ inline void trim_right(const char* s, int *len)
 	}
 }
 
-static struct sdp_timing* sdp_get_timing(struct sdp_context* sdp, size_t idx)
+static inline struct sdp_timing* sdp_get_timing(struct sdp_context* sdp, size_t idx)
 {
 	if(idx >= sdp->t.count)
 		return NULL;
@@ -269,7 +262,7 @@ static struct sdp_timing* sdp_get_timing(struct sdp_context* sdp, size_t idx)
 	return idx >= N_TIMING ? &sdp->t.ptr[idx - N_TIMING] : &sdp->t.times[idx];
 }
 
-static struct sdp_media* sdp_get_media(struct sdp_context* sdp, size_t idx)
+static inline struct sdp_media* sdp_get_media(struct sdp_context* sdp, size_t idx)
 {
 	if(idx >= sdp->m.count)
 		return NULL;
@@ -307,7 +300,7 @@ static int sdp_parse_version(struct sdp_context* sdp)
 // <addrtype> IP4/IP6
 static int sdp_parse_origin(struct sdp_context* sdp)
 {
-	int n[6];
+	size_t n[6];
 	struct sdp_origin *o;
 
 	o = &sdp->o;
@@ -358,7 +351,7 @@ static int sdp_parse_origin(struct sdp_context* sdp)
 // There MUST be one and only one "s=" field per session description. can be empty
 static int sdp_parse_session(struct sdp_context* sdp)
 {
-	int n = 0;
+	size_t n = 0;
 
 	sdp->s = sdp->raw + sdp->offset;
 
@@ -377,7 +370,7 @@ static int sdp_parse_session(struct sdp_context* sdp)
 // default UTF-8
 static int sdp_parse_information(struct sdp_context* sdp)
 {
-	int n = 0;
+	size_t n = 0;
 	char **i;
 
 	if(sdp->m.count > 0)
@@ -405,7 +398,7 @@ static int sdp_parse_information(struct sdp_context* sdp)
 // specified before the first media field. 
 static int sdp_parse_uri(struct sdp_context* sdp)
 {
-	int n = 0;
+	size_t n = 0;
 
 	// No more than one URI field is allowed per session description.
 	assert(!sdp->u);
@@ -431,7 +424,7 @@ static int sdp_parse_uri(struct sdp_context* sdp)
 // e=Jane Doe <j.doe@example.com>
 static int sdp_parse_email(struct sdp_context* sdp)
 {
-	int n = 0;
+	size_t n = 0;
 	struct sdp_email *e;
 
 	if(sdp->e.count >= N_EMAIL)
@@ -468,7 +461,7 @@ static int sdp_parse_email(struct sdp_context* sdp)
 
 static int sdp_parse_phone(struct sdp_context* sdp)
 {
-	int n = 0;
+	size_t n = 0;
 	struct sdp_phone *p;
 
 	if(sdp->p.count >= N_PHONE)
@@ -515,7 +508,7 @@ static int sdp_parse_phone(struct sdp_context* sdp)
 // used for IP unicast addresses
 static int sdp_parse_connection(struct sdp_context* sdp)
 {
-	int n[3];
+	size_t n[3];
 	struct sdp_media *m;
 	struct sdp_connection *c;
 
@@ -585,7 +578,7 @@ static int sdp_parse_connection(struct sdp_context* sdp)
 // b=X-YZ:128
 static int sdp_parse_bandwidth(struct sdp_context* sdp)
 {
-	int n[2];
+	size_t n[2];
 	struct bandwidths *bs;
 	struct sdp_bandwidth *b;
 
@@ -656,7 +649,7 @@ static int sdp_parse_bandwidth(struct sdp_context* sdp)
 //    until after the <start-time>. If the <start-time> is also zero, the session is regarded as permanent.
 static int sdp_parse_timing(struct sdp_context* sdp)
 {
-	int n[2];
+	size_t n[2];
 	struct sdp_timing *t;
 
 	if(sdp->t.count >= N_TIMING)
@@ -735,7 +728,7 @@ static int sdp_append_timing_repeat_offset(struct sdp_repeat *r, char* offset)
 static int sdp_parse_repeat(struct sdp_context* sdp)
 {
 	int ret;
-	int n[3];
+	size_t n[3];
 	char *offset;
 	struct sdp_timing *t;
 	struct sdp_repeat *r;
@@ -877,7 +870,7 @@ static int sdp_parse_timezone(struct sdp_context* sdp)
 // it applies to all media in the session), or for each media entry as required.
 static int sdp_parse_encryption(struct sdp_context* sdp)
 {
-	int n[2];
+	size_t n[2];
 	struct sdp_encryption *k;
 
 	if(sdp->m.count > 0)
@@ -935,7 +928,7 @@ static int sdp_parse_encryption(struct sdp_context* sdp)
 // a=fmtp:<format> <format specific parameters>
 static int sdp_parse_attribute(struct sdp_context* sdp)
 {
-	int n[2];
+	size_t n[2];
 	struct attributes *as;
 	struct sdp_attribute *a;
 
@@ -1030,7 +1023,7 @@ static int sdp_append_media_format(struct sdp_media *m, char* fmt)
 static int sdp_parse_media(struct sdp_context* sdp)
 {
 	int ret;
-	int n[4];
+	size_t n[4];
 	char *fmt;
 	struct sdp_media *m;
 
@@ -1509,7 +1502,7 @@ const char* sdp_media_proto(void* sdp, int media)
 // (p24) If the <proto> sub-field is "udp" the <fmt> sub-fields MUST
 // reference a media type describing the format under the "audio",
 // "video", "text", "application", or "message" top-level media types.
-inline int sdp_media_format_value(const char* format)
+static inline int sdp_media_format_value(const char* format)
 {
 	switch(format[0])
 	{

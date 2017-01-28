@@ -7,8 +7,7 @@
 #include "mpeg-pes-proto.h"
 #include "mpeg-util.h"
 #include "mpeg-ps.h"
-#include "cstringext.h"
-#include "h264-util.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <memory.h>
@@ -173,7 +172,7 @@ int mpeg_ps_write(void* ps, int avtype, int64_t pts, int64_t dts, const void* da
 		p = pes + pes_write_header(pts, dts, streamId, pes);
 		assert(p - pes < 64);
 
-		if(first && PSI_STREAM_H264 == avtype && 0x09 != h264_type(payload, bytes))
+		if(first && PSI_STREAM_H264 == avtype && 0 == find_h264_access_unit_delimiter(payload, bytes))
 		{
 			// 2.14 Carriage of Rec. ITU-T H.264 | ISO/IEC 14496-10 video
 			// Each AVC access unit shall contain an access unit delimiter NAL Unit
@@ -307,6 +306,10 @@ int mpeg_ps_add_stream(void* ps, int avtype, const void* info, size_t bytes)
 	case PSI_STREAM_AUDIO_AC3:
 	case PSI_STREAM_AUDIO_DTS:
 	case PSI_STREAM_AUDIO_SVAC:
+	case PSI_STREAM_AUDIO_G711:
+	case PSI_STREAM_AUDIO_G722:
+	case PSI_STREAM_AUDIO_G723:
+	case PSI_STREAM_AUDIO_G729:
 		psm->streams[psm->stream_count].pesid = (uint8_t)(PES_SID_AUDIO + psctx->syshd.audio_bound);
 
 		assert(psctx->syshd.audio_bound + 1 < 32);

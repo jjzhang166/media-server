@@ -1,15 +1,14 @@
-// ITU-T H.222.0(06/2012)
+// ITU-T H.222.0(10/2014)
 // Information technology 每 Generic coding of moving pictures and associated audio information: Systems
-// 2.4.4.3 Program association table(p61)
+// 2.4.4.3 Program association table(p65)
 
 #include "mpeg-ts-proto.h"
 #include "mpeg-util.h"
-#include "crc32.h"
 #include <assert.h>
 
 size_t pat_read(const uint8_t* data, size_t bytes, pat_t *pat)
 {
-	// Table 2-30 每 Program association section(p61)
+	// Table 2-30 每 Program association section(p65)
 
 	uint32_t i = 0;
 	uint32_t j = 0;
@@ -54,7 +53,7 @@ size_t pat_read(const uint8_t* data, size_t bytes, pat_t *pat)
 
 size_t pat_write(const pat_t *pat, uint8_t *data)
 {
-	// Table 2-30 每 Program association section(p61)
+	// Table 2-30 每 Program association section(p65)
 
 	uint32_t i = 0;
 	uint32_t len = 0;

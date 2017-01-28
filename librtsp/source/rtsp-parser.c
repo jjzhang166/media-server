@@ -1,12 +1,18 @@
 #include "rtsp-parser.h"
-#include "cstringext.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 #include <ctype.h>
+#include "cstringext.h"
 
 #define KB (1024)
 #define MB (1024*1024)
+
+#define ISSPACE(c)		((c)==' ')
+#define VMAX(a, b)		((a) > (b) ? (a) : (b))
+#define VMIN(a, b)		((a) < (b) ? (a) : (b))
 
 enum { SM_FIRSTLINE = 0, SM_HEADER = 100, SM_BODY = 200, SM_DONE = 300 };
 
@@ -61,7 +67,7 @@ struct rtsp_context
 	int header_size; // the number of http header
 	int header_capacity;
 	int content_length; // -1-don't have header, >=0-Content-Length
-	int connection;
+	int connection_close; // 1-close, 0-keep-alive, <0-don't set
 	int content_encoding;
 	int transfer_encoding;
 	int cookie;
@@ -77,46 +83,43 @@ static unsigned int s_body_max_size = 0*MB;
 //				| "," | ";" | ":" | "\" | <">
 //				| "/" | "[" | "]" | "?" | "="
 //				| "{" | "}" | SP | HT
-#define isseparators(c)	(!!strchr("()<>@,;:\\\"/[]?={} \t", (c)))
-#define isspace(c)		((c)==' ')
-
-inline int is_valid_token(const char* s, int len)
+static inline int is_valid_token(const char* s, int len)
 {
 	const char *p;
 	for(p = s; p < s + len && *p; ++p)
 	{
 		// CTLs or separators
-		if(*p <= 31 || *p >= 127 || isseparators(*p))
+		if(*p <= 31 || *p >= 127 || !!strchr("()<>@,;:\\\"/[]?={} \t", *p))
 			break;
 	}
 
 	return p == s+len ? 1 : 0;
 }
 
-inline void trim_right(const char* s, size_t *pos, size_t *len)
+static inline void trim_right(const char* s, size_t *pos, size_t *len)
 {
 	//// left trim
-	//while(*len > 0 && isspace(s[*pos]))
+	//while(*len > 0 && ISSPACE(s[*pos]))
 	//{
 	//	--*len;
 	//	++*pos;
 	//}
 
 	// right trim
-	while(*len > 0 && isspace(s[*pos + *len - 1]))
+	while(*len > 0 && ISSPACE(s[*pos + *len - 1]))
 	{
 		--*len;
 	}
 }
 
-inline int is_server_mode(struct rtsp_context *ctx)
+static inline int is_server_mode(struct rtsp_context *ctx)
 {
 	return RTSP_PARSER_SERVER==ctx->server_mode ? 1 : 0;
 }
 
-inline int is_transfer_encoding_chunked(struct rtsp_context *ctx)
+static inline int is_transfer_encoding_chunked(struct rtsp_context *ctx)
 {
-	return (ctx->transfer_encoding>0 && 0==strnicmp("chunked", ctx->raw+ctx->transfer_encoding, 7)) ? 1 : 0;
+	return (ctx->transfer_encoding>0 && 0==strncasecmp("chunked", ctx->raw+ctx->transfer_encoding, 7)) ? 1 : 0;
 }
 
 static int rtsp_rawdata(struct rtsp_context *ctx, const void* data, int bytes)
@@ -127,11 +130,12 @@ static int rtsp_rawdata(struct rtsp_context *ctx, const void* data, int bytes)
 	if(ctx->raw_capacity - ctx->raw_size < (size_t)bytes + 1)
 	{
 		capacity = (ctx->raw_capacity > 4*MB) ? 50*MB : (ctx->raw_capacity > 16*KB ? 2*MB : 8*KB);
-		p = realloc(ctx->raw, ctx->raw_capacity + MAX(bytes+1, capacity));
+		capacity = (bytes + 1) > capacity ? (bytes + 1) : capacity;
+		p = realloc(ctx->raw, ctx->raw_capacity + capacity);
 		if(!p)
 			return ENOMEM;
 
-		ctx->raw_capacity += MAX(bytes+1, capacity);
+		ctx->raw_capacity += capacity;
 		ctx->raw = p;
 	}
 
@@ -200,7 +204,7 @@ static int rtsp_header_handler(struct rtsp_context *ctx, size_t npos, size_t vpo
 	const char* name = ctx->raw + npos;
 	const char* value = ctx->raw + vpos;
 
-	if(0 == stricmp("Content-Length", name))
+	if(0 == strcasecmp("Content-Length", name))
 	{
 		// H4.4 Message Length, section 3, ignore content-length if in chunked mode
 		if(is_transfer_encoding_chunked(ctx))
@@ -209,19 +213,19 @@ static int rtsp_header_handler(struct rtsp_context *ctx, size_t npos, size_t vpo
 			ctx->content_length = atoi(value);
 		assert(ctx->content_length >= 0 && (0==s_body_max_size || ctx->content_length < (int)s_body_max_size));
 	}
-	else if(0 == stricmp("Connection", name))
+	else if(0 == strcasecmp("Connection", name))
 	{
-		ctx->connection = strieq("close", value) ? 1 : 0;
+		ctx->connection_close = (0 == strcasecmp("close", value)) ? 1 : 0;
 	}
-	else if(0 == stricmp("Content-Encoding", name))
+	else if(0 == strcasecmp("Content-Encoding", name))
 	{
 		// gzip/compress/deflate/identity(default)
 		ctx->content_encoding = (int)vpos;
 	}
-	else if(0 == stricmp("Transfer-Encoding", name))
+	else if(0 == strcasecmp("Transfer-Encoding", name))
 	{
 		ctx->transfer_encoding = (int)vpos;
-		if(0 == strnicmp("chunked", value, 7))
+		if(0 == strncasecmp("chunked", value, 7))
 		{
 			// chunked can't use with content-length
 			// H4.4 Message Length, section 3,
@@ -229,11 +233,11 @@ static int rtsp_header_handler(struct rtsp_context *ctx, size_t npos, size_t vpo
 			ctx->raw[ctx->transfer_encoding + 7] = '\0'; // ignore parameters
 		}
 	}
-	else if(0 == stricmp("Set-Cookie", name))
+	else if(0 == strcasecmp("Set-Cookie", name))
 	{
 		ctx->cookie = (int)vpos;
 	}
-	else if(0 == stricmp("Location", name))
+	else if(0 == strcasecmp("Location", name))
 	{
 		ctx->location = (int)vpos;
 	}
@@ -292,9 +296,9 @@ static int rtsp_parse_request_line(struct rtsp_context *ctx)
 			assert('\n' != ctx->raw[ctx->offset]);
 			if(' ' == ctx->raw[ctx->offset])
 			{
-				size_t n = MIN(ctx->offset, sizeof(ctx->req.method)-1);
-				assert(ctx->offset < sizeof(ctx->req.method)-1);
-				strncpy(ctx->req.method, ctx->raw, n);
+				size_t n = VMIN(ctx->offset, sizeof(ctx->req.method));
+				assert(ctx->offset < sizeof(ctx->req.method));
+				strlcpy(ctx->req.method, ctx->raw, n);
 				ctx->stateM = SM_REQUEST_METHOD_SP;
 				assert(0 == ctx->req.uri_pos);
 				assert(0 == ctx->req.uri_len);
@@ -302,7 +306,7 @@ static int rtsp_parse_request_line(struct rtsp_context *ctx)
 			break;
 
 		case SM_REQUEST_METHOD_SP:
-			if(isspace(ctx->raw[ctx->offset]))
+			if(ISSPACE(ctx->raw[ctx->offset]))
 				break; // skip SP
 
 			assert('\r' != ctx->raw[ctx->offset]);
@@ -327,11 +331,14 @@ static int rtsp_parse_request_line(struct rtsp_context *ctx)
 			}
 			else
 			{
-				// validate URI
-				// RFC 1738: 
-				// only alphanumerics, the special characters "$-_.+!*'(),", and reserved characters 
-				// used for their reserved purposes may be used unencoded within a URL.
-				assert(isalnum(ctx->raw[ctx->offset]) || strchr("$-_.+!*'(),;/?:@=&", ctx->raw[ctx->offset]));
+				// RFC3986 
+				// 2.2 Reserved Characters
+				// reserved    = gen-delims / sub-delims
+				// gen-delims  = ":" / "/" / "?" / "#" / "[" / "]" / "@"
+				// sub-delims  = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
+				// 2.3.  Unreserved Characters
+				// unreserved  = ALPHA / DIGIT / "-" / "." / "_" / "~"
+				assert(isalnum(ctx->raw[ctx->offset]) || strchr("-._~:/?#[]@!$&'()*+,;=", ctx->raw[ctx->offset]) || '%' == ctx->raw[ctx->offset]);
 			}
 			break;
 
@@ -434,7 +441,7 @@ static int rtsp_parse_status_line(struct rtsp_context *ctx)
 		case SM_STATUS_CODE_SP:
 			assert('\r' != ctx->raw[ctx->offset]);
 			assert('\n' != ctx->raw[ctx->offset]);
-			if(isspace(ctx->raw[ctx->offset]))
+			if(ISSPACE(ctx->raw[ctx->offset]))
 				break; // skip SP
 
 			assert(0 == ctx->reply.reason_pos);
@@ -887,7 +894,7 @@ void rtsp_parser_clear(void* parser)
 	ctx->raw_size = 0;
 	ctx->header_size = 0;
 	ctx->content_length = -1;
-	ctx->connection = -1;
+	ctx->connection_close = -1;
 	ctx->content_encoding = 0;
 	ctx->transfer_encoding = 0;
 	ctx->cookie = 0;
@@ -1048,7 +1055,7 @@ const char* rtsp_get_header_by_name(void* parser, const char* name)
 
 	for(i = 0; i < ctx->header_size; i++)
 	{
-		if(0 == stricmp(ctx->raw + ctx->headers[i].npos, name))
+		if(0 == strcasecmp(ctx->raw + ctx->headers[i].npos, name))
 			return ctx->raw + ctx->headers[i].vpos;
 	}
 
@@ -1064,7 +1071,7 @@ int rtsp_get_header_by_name2(void* parser, const char* name, int *value)
 
 	for(i = 0; i < ctx->header_size; i++)
 	{
-		if(0 == stricmp(ctx->raw + ctx->headers[i].npos, name))
+		if(0 == strcasecmp(ctx->raw + ctx->headers[i].npos, name))
 		{
 			*value = atoi(ctx->raw + ctx->headers[i].vpos);
 			return 0;
@@ -1092,7 +1099,7 @@ int rtsp_get_connection(void* parser)
 	struct rtsp_context *ctx;
 	ctx = (struct rtsp_context*)parser;
 	assert(ctx->stateM>=SM_BODY);
-	return ctx->connection;
+	return ctx->connection_close;
 }
 
 const char* rtsp_get_content_encoding(void* parser)

@@ -6,20 +6,28 @@
 #include "mpeg-ps-proto.h"
 #include "mpeg-pes-proto.h"
 #include "mpeg-ts.h"
-#include "crc32.h"
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
+
+struct mpeg_ts_handler_t
+{
+	void(*handler)();
+};
 
 typedef struct _mpeg_ts_dec_context_t
 {
 	pat_t pat;
 	pmt_t pmt[1];
 	pes_t pes[2];
+	struct mpeg_ts_handler_t handlers[0x1fff + 1]; // TODO: setup PID handler
+
+	uint8_t payload[4 * 1024 * 1024]; // TODO: need more payload buffer!!!
 } mpeg_ts_dec_context_t;
 
 static mpeg_ts_dec_context_t tsctx;
 
-static uint32_t ts_packet_adaptation(const uint8_t* data, int bytes, ts_adaptation_field_t *adp)
+static uint32_t ts_packet_adaptation(const uint8_t* data, size_t bytes, ts_adaptation_field_t *adp)
 {
 	// 2.4.3.4 Adaptation field
 	// Table 2-6
@@ -28,8 +36,6 @@ static uint32_t ts_packet_adaptation(const uint8_t* data, int bytes, ts_adaptati
 
 	assert(bytes <= TS_PACKET_SIZE);
 	adp->adaptation_field_length = data[i++];
-	printf("adaptaion(%d)  flag: %0x\n", adp->adaptation_field_length, (unsigned int)data[i]);
-
 	if(adp->adaptation_field_length > 0)
 	{
 		adp->discontinuity_indicator = (data[i] >> 7) & 0x01;
@@ -44,8 +50,7 @@ static uint32_t ts_packet_adaptation(const uint8_t* data, int bytes, ts_adaptati
 
 		if(adp->PCR_flag)
 		{
-			adp->program_clock_reference_base = data[i];
-			adp->program_clock_reference_base = (adp->program_clock_reference_base << 25) | ((uint64_t)data[i+1] << 17) | ((uint64_t)data[i+2] << 9) | ((uint64_t)data[i+3] << 1) | ((data[i+4] >> 7) & 0x01);
+			adp->program_clock_reference_base = ((uint64_t)data[i] << 25) | ((uint64_t)data[i+1] << 17) | ((uint64_t)data[i+2] << 9) | ((uint64_t)data[i+3] << 1) | ((data[i+4] >> 7) & 0x01);
 			adp->program_clock_reference_extension = ((data[i+4] & 0x01) << 8) | data[i+5];
 
 			i += 6;
@@ -53,7 +58,7 @@ static uint32_t ts_packet_adaptation(const uint8_t* data, int bytes, ts_adaptati
 
 		if(adp->OPCR_flag)
 		{
-			adp->original_program_clock_reference_base = (data[i] << 25) | (data[i+1] << 17) | (data[i+2] << 9) | (data[i+3] << 1) | ((data[i+4] >> 7) & 0x01);
+			adp->original_program_clock_reference_base = (((uint64_t)data[i]) << 25) | ((uint64_t)data[i+1] << 17) | ((uint64_t)data[i+2] << 9) | ((uint64_t)data[i+3] << 1) | ((data[i+4] >> 7) & 0x01);
 			adp->original_program_clock_reference_extension = ((data[i+4] & 0x01) << 1) | data[i+5];
 
 			i += 6;
@@ -123,7 +128,7 @@ static uint32_t ts_packet_adaptation(const uint8_t* data, int bytes, ts_adaptati
 static uint8_t s_video[1024*1024];
 static uint8_t s_audio[1024*1024];
 
-int mpeg_ts_packet_dec(const uint8_t* data, size_t bytes)
+int mpeg_ts_packet_dec(const uint8_t* data, size_t bytes, onpacket handler, void* param)
 {
 	uint32_t i, j, k;
 	int64_t t;
@@ -140,15 +145,18 @@ int mpeg_ts_packet_dec(const uint8_t* data, size_t bytes)
     memset(&pkhd, 0, sizeof(pkhd));
 	assert(0x47 == data[0]); // sync_byte
 	PID = ((data[1] << 8) | data[2]) & 0x1FFF;
+	pkhd.transport_error_indicator = (data[1] >> 7) & 0x01;
+	pkhd.payload_unit_start_indicator = (data[1] >> 6) & 0x01;
+	pkhd.transport_priority = (data[1] >> 5) & 0x01;
 	pkhd.transport_scrambling_control = (data[3] >> 6) & 0x03;
 	pkhd.adaptation_field_control = (data[3] >> 4) & 0x03;
 	pkhd.continuity_counter = data[3] & 0x0F;
 
-	printf("-----------------------------------------------\n");
-	printf("packet: %0x %0x %0x %0x\n", (unsigned int)data[0], (unsigned int)data[1], (unsigned int)data[2], (unsigned int)data[3]);
+//	printf("-----------------------------------------------\n");
+//	printf("PID[%u]: Start:%u, Priority:%u, Scrambler:%u, AF: %u, CC: %u\n", PID, pkhd.payload_unit_start_indicator, pkhd.transport_priority, pkhd.transport_scrambling_control, pkhd.adaptation_field_control, pkhd.continuity_counter);
 
 	i = 4;
-	if(0x02 == pkhd.adaptation_field_control || 0x03 == pkhd.adaptation_field_control)
+	if(0x02 & pkhd.adaptation_field_control)
 	{
 		i += ts_packet_adaptation(data + 4, bytes - 4, &pkhd.adaptation);
 
@@ -159,7 +167,7 @@ int mpeg_ts_packet_dec(const uint8_t* data, size_t bytes)
 		}
 	}
 
-	if(0x01 == pkhd.adaptation_field_control || 0x03 == pkhd.adaptation_field_control)
+	if(0x01 & pkhd.adaptation_field_control)
 	{
 		if(0x00 == PID)
 		{
@@ -182,53 +190,52 @@ int mpeg_ts_packet_dec(const uint8_t* data, size_t bytes)
 					pmt_read(data + i, bytes - i, &tsctx.pmt[j]);
 					break;
 				}
-
-				for(k = 0; k < tsctx.pat.pmt[j].stream_count; k++)
+				else
 				{
-					if(PID == tsctx.pes[k].pid)
+					for (k = 0; k < tsctx.pat.pmt[j].stream_count; k++)
 					{
-						if(TS_PAYLOAD_UNIT_START_INDICATOR(data))
+						if (PID == tsctx.pes[k].pid)
 						{
-                            if(!tsctx.pes[k].payload)
-                                tsctx.pes[k].payload = (PSI_STREAM_H264==tsctx.pes[k].avtype) ? s_video : s_audio;
-
-                            pes_read(data + i, bytes - i, &psm, &tsctx.pes[k]);
-
-                            if(0 == k)
-                                printf("pes payload: %u\n", tsctx.pes[k].len);
-
-							if(tsctx.pes[k].PTS_DTS_flags & 0x02)
+							if (TS_PAYLOAD_UNIT_START_INDICATOR(data))
 							{
-								t = tsctx.pes[k].pts / 90;
-								printf("pts: %02d:%02d:%02d.%03d - %" PRId64 "\n", (int)(t / 3600000), (int)(t % 3600000)/60000, (int)((t/1000) % 60), (int)(t % 1000), tsctx.pes[k].pts);
+								if (!tsctx.pes[k].payload)
+									tsctx.pes[k].payload = (PSI_STREAM_H264 == tsctx.pes[k].avtype) ? s_video : s_audio;
+
+								if (tsctx.pes[k].payload_len > 0)
+								{
+									assert(0 == tsctx.pes[k].len || tsctx.pes[k].payload_len == tsctx.pes[k].len - tsctx.pes[k].PES_header_data_length - 3);
+									// TODO: filter 0x09 AUD
+									if ((tsctx.pes[k].payload[4] == 0x09 && 0x00 == tsctx.pes[k].payload[0] && 0x00 == tsctx.pes[k].payload[1] && 0x00 == tsctx.pes[k].payload[2] && 0x01 == tsctx.pes[k].payload[3]))
+										handler(param, tsctx.pes[k].avtype, tsctx.pes[k].pts, tsctx.pes[k].dts, tsctx.pes[k].payload + 6, tsctx.pes[k].payload_len - 6);
+									else
+										handler(param, tsctx.pes[k].avtype, tsctx.pes[k].pts, tsctx.pes[k].dts, tsctx.pes[k].payload, tsctx.pes[k].payload_len);
+
+									tsctx.pes[k].payload_len = 0;
+								}
+
+								pes_read(data + i, bytes - i, &psm, &tsctx.pes[k]);
+							}
+							else
+							{
+								memcpy(tsctx.pes[k].payload + tsctx.pes[k].payload_len, data + i, bytes - i);
+								tsctx.pes[k].payload_len += bytes - i;
+
+								//if(tsctx.pes[i].len > 0)
+								//    tsctx.pes[k].len -= bytes - i;
 							}
 
-							if(tsctx.pes[k].PTS_DTS_flags & 0x01)
-							{
-								t = tsctx.pes[k].dts / 90;
-								printf("dts: %02d:%02d:%02d.%03d - %" PRId64 "\n", (int)(t / 3600000), (int)(t % 3600000)/60000, (int)((t/1000) % 60), (int)(t % 1000), tsctx.pes[k].dts);
-							}
+							break; // find stream
 						}
-						else
-						{
-                            memcpy(tsctx.pes[k].payload + tsctx.pes[k].payload_len, data + i, bytes - i);
-                            tsctx.pes[k].payload_len += bytes - i;
-
-                            //if(tsctx.pes[i].len > 0)
-                            //    tsctx.pes[k].len -= bytes - i;
-						}
-
-						break; // goto out?
 					}
-				}
+				} // PMT handler
 			}
-		}
+		} // PAT handler
 	}
 
 	return 0;
 }
 
-static int mpeg_ts_is_idr_first_packet(const void* packet, int bytes)
+static inline int mpeg_ts_is_idr_first_packet(const void* packet, int bytes)
 {
 	const unsigned char *data;
 	ts_packet_header_t pkhd;

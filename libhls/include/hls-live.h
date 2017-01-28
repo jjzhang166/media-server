@@ -1,7 +1,6 @@
 #ifndef _hls_live_h_
 #define _hls_live_h_
 
-#include "cstringext.h"
 #include "sys/atomic.h"
 #include "sys/locker.h"
 #include "ctypedef.h"
@@ -29,14 +28,15 @@ struct hls_live_t
 
 	void* ts;
     int64_t pts;
+	int64_t duration;
 	time64_t rtime; // last read time
 	time64_t wtime; // last write time
 
     unsigned char *vbuffer;
 };
 
-int hls_live_init();
-int hls_live_cleanup();
+int hls_live_init(void);
+int hls_live_cleanup(void);
 
 /// create/destroy live object
 struct hls_live_t* hls_live_fetch(const char* name);
